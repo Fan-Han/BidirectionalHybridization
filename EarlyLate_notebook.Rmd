@@ -1,0 +1,794 @@
+---
+title: "Early/Late fortis/scandens project"
+author: "Fan Han"
+date: "November 20, 2018"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(ggplot2)
+```
+
+
+# prepare dataset
+Extract the 6 pools and rename the samples  
+
+**Sample information**  
+
+Original ID | Sample ID  
+------------------------------------------|-------------
+150731_D00457_0112_BC71DHANXX/Sample_Pool1 | sca_Early_p
+150731_D00457_0112_BC71DHANXX/Sample_Pool2 | sca_Late_b
+150813_D00118_0225_BC79PNANXX/Sample_Pool3 | sca_Late_p
+150819_D00118_0226_AC79LFANXX/Sample_Pool4 | for_Early_b
+150819_D00118_0226_AC79LFANXX/Sample_Pool5 | for_Late_b
+150819_D00118_0226_AC79LFANXX/Sample_Pool6 | for_Late_p
+
+pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools  
+```{bash, eval=FALSE}
+vcftools --vcf Early_Late.Filtered.vcf --keep sample.list --maf 0.001 --recode --out Early_Late
+
+bcftools reheader -s sample.list --threads 10 -o Early_Late.vcf Early_Late.recode.vcf
+
+gzip Early_Late.vcf
+
+rm Early_Late.recode.vcf
+```
+
+Number of SNPs: 10,814,262
+
+# Whole-genome NJ tree
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/WGTree
+* No missing GT
+* Number of SNPs: 10,795,687
+```{bash, eval=FALSE}
+ln -s ../TreeScan/Early_Late.freq
+head -n 1 Early_Late.freq > Early_Late.Auto.freq
+grep -Ff ../../2019_correctedSNPs/Auto_scaffold.list Early_Late.freq >> Early_Late.Auto.freq
+perl ../TreeScan/freq2gendist.pl Early_Late.Auto.freq > Early_Late.Auto.GendistIN
+gendist
+mv outfile Early_Late.Auto.GendistOUT
+neighbor
+mv outtree Early_Late.Auto.NJ.tree
+mv outfile Early_Late.Auto.outfile
+
+head -n 1 Early_Late.freq > Early_Late.Z.freq
+grep -Ff ../../2019_correctedSNPs/Z_scaffold.list Early_Late.freq >> Early_Late.Z.freq
+
+
+# For publication purpose, we need to bootstrap
+# that can be done with PHYLIP seqboot. It could take either molecular sequences or allele frequencies as input, and result can be directed into Gendist. Only need I do is to specify multiple datasets in Gendist
+# Z
+echo -e "Early_Late.Z.GendistIN\nD\nD\nD\nR\n1000\nY\n7" > input1
+seqboot <input1> screenout && mv outfile Early_Late.Z.seqboot
+echo -e "Early_Late.Z.seqboot\nM\n1000\nY" > input2
+gendist <input2> screenout && mv outfile Early_Late.Z.gendist
+echo -e "Early_Late.Z.gendist\nM\n1000\n7\nY" > input3
+neighbor <input3> screenout && mv outfile Early_Late.Z.nj && mv outtree Early_Late.Z.nj.trees
+echo -e "Early_Late.Z.nj.trees\nY" > input4
+consense <input4> screenout && mv outfile Early_Late.Z.consense && mv outtree Early_Late.Z.consense.tree
+
+# Autosomes
+echo -e "Early_Late.Auto.GendistIN\nD\nD\nD\nR\n1000\nY\n7" > input1
+seqboot <input1> screenout && mv outfile Early_Late.Auto.seqboot
+echo -e "Early_Late.Auto.seqboot\nM\n1000\nY" > input2
+gendist <input2> screenout && mv outfile Early_Late.Auto.gendist
+echo -e "Early_Late.Auto.gendist\nM\n1000\n7\nY" > input3
+neighbor <input3> screenout && mv outfile Early_Late.Auto.nj && mv outtree Early_Late.Auto.nj.trees
+echo -e "Early_Late.Auto.nj.trees\nY" > input4
+consense <input4> screenout && mv outfile Early_Late.Auto.consense && mv outtree Early_Late.Auto.consense.tree
+
+```
+* Plot of whole-genome trees
+![Autosomal tree](WGTree/Early_Late.Auto.NJ.tree.png)
+
+![Z-linked tree](WGTree/Early_Late.Z.NJ.tree.png)
+* It shows that the introgression primarily happened on autosomes
+
+# TreeScan with 50kb window  
+* Because the data is pooled sequencing, I can only build NJ tree for each window  
+* Calculate the allele frequency for each population  
+* Remember to midpoint-rooting the trees with retree program from PHYLIP otherwise the visualization in Densitree will be not pretty  
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/TreeScan 
+* Run time 01:02:51  
+
+```{bash, eval=FALSE}
+vcftools --gzvcf Early_Late.vcf.gz --out Early_Late --extract-FORMAT-info AD --max-missing 1
+
+./AF_each_pool.pl ../Early_Late.AD.FORMAT > Early_Late.freq
+
+# Runtime: ~2 hrs
+./geneFlow_WGScan_pool.pl -freq Early_Late.freq  -window 50000
+
+awk -F "\t" '{print $2}' out.trees >  all.trees
+wc -l all.trees number_snp.window
+paste number_snp.window all.trees > all.snp.trees
+
+# To get better view in DensiTree, I rooted all the trees
+./midpoint_rooting.pl all.snp.trees > all.snp.midpoint.trees
+
+grep -Ff ../../2019_correctedSNPs/Auto_scaffold.list all.snp.midpoint.trees | awk -F "\t" '($2>=20)&&($2<=2000){print $3}' > all.snp.midpoint.Auto.trees
+grep -Ff ../../2019_correctedSNPs/Z_scaffold.list all.snp.midpoint.trees | awk -F "\t" '($2>=20)&&($2<=2000){print $3}' > all.snp.midpoint.Z.trees
+
+rm all.trees
+```
+Number of  trees: 20,632
+
+**DensiTree to visualize all the midpoint-rooted trees**  
+
+![19,040 Autosomal trees from DensiTree](TreeScan/all.snp.midpoint.Auto.DensiTree.png)
+
+![1,536 Z trees from DensiTree](TreeScan/all.snp.midpoint.Z.DensiTree.png)
+
+* It is noticeable that within-species introgression happens more on Z and between-species introgression happens more on autosomes
+
+**Summary of the tree topologies across the genome**
+
+* The output of TreeScan is a list of newick trees. The tricky thing is to compare them in pairwise and decide which topologies are the same.  
+It seems ETE Toolkit could help with this: http://etetoolkit.org/documentation/ete-compare/. It compares the Robinson-Foulds' distance of multiple trees with reference tree and report mismatches. But it needs reference trees as input. So first I need to produce all the possible topologies  
+
+* Treedist from PHYLIP package could also report pairwise distance and much faster than ETE. Change the Distance type to symmetric Difference. http://evolution.genetics.washington.edu/phylip/doc/treedist.html
+
+* I cannot really determine whether two populations are clustered in unrooted trees if they are present on the internal branch. So I need to root every tree and compare if they are identical
+
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/TreeScan/Rooted
+
+* Runtime: ~4 days
+
+```{bash, eval=FALSE}
+# simplify trees by removing the branch length. Only focus on the toplogy
+./treeSimple.pl all.snp.midpoint.trees > all.snp.midpoint.simple.trees
+# Produce all the unique trees as reference. (62 unique trees)
+./uniq_trees_rooted.pl all.snp.midpoint.simple.trees > reference.rooted.trees
+# compare each window to all reference trees. It is time-consuming and I culd split the files to run in parallel
+./compare_window_tree_rooted.pl reference.rooted.trees all.snp.midpoint.simple.trees > all.snp.midpoint.assign.trees
+```
+* Simplify tree categories. The trees that have two distinct clusters of fortis and scandens should be considered as one type no matter how the within-species divergence is. But how...  
+```{bash, eval=F}
+./category_trees.pl reference.rooted.trees > reference.rooted.trees.class
+./tree_class.pl all.snp.midpoint.assign.trees > all.snp.midpoint.assign.class.trees
+grep -Ff ../../../2019_correctedSNPs/Auto_scaffold.list all.snp.midpoint.assign.class.trees > all.snp.midpoint.assign.class.Auto.trees
+grep -Ff ../../../2019_correctedSNPs/Z_scaffold.list all.snp.midpoint.assign.class.trees > all.snp.midpoint.assign.class.Z.trees
+```
+* Count the number of each rooted toplogy across the genome
+```{r, warning=FALSE, message=FALSE}
+# Autosome
+auto <- read.table("TreeScan/Rooted/all.snp.midpoint.assign.class.Auto.trees", header=F)
+colnames(auto) <- c("CHR", "BIN_START", "N_SNP", "Tree", "Ref_Tree", "Tree_Type")
+auto <- auto[auto$N_SNP>=20&auto$N_SNP<=2000,]
+auto$TYPE <- rep("Auto", nrow(auto))
+
+# Z-linked scaffolds
+Z <- read.table("TreeScan/Rooted/all.snp.midpoint.assign.class.Z.trees", header=F)
+colnames(Z) <- c("CHR", "BIN_START", "N_SNP", "Tree", "Ref_Tree", "Tree_Type")
+Z <- Z[Z$N_SNP>=20&Z$N_SNP<=2000,]
+Z$TYPE <- rep("Z", nrow(Z))
+
+# combine them
+genome <- rbind(auto,Z)
+
+genome.table <- as.data.frame(table(genome$Tree_Type, genome$TYPE))
+library(dplyr)
+genome.table <- genome.table %>% group_by(Var2) %>% mutate(percent = Freq/sum(Freq))
+
+# Don't plot the Other_tree type
+genome.table <- genome.table[genome.table$Var1!="Other_Tree",]
+library(ggplot2)
+#pdf("TreeScan/Rooted/Rooted_tree_hist.pdf", width = 5.8, height = 4.1)
+ggplot(genome.table) + geom_col(aes(x=reorder(Var1,percent), y=percent, fill=Var2), position = "dodge2") + xlab("") + ylab("Fraction") + theme_bw() + scale_y_continuous(expand=c(0.01,0)) + scale_fill_manual(values=c("red","blue")) + coord_flip()
+#print(g)
+#dev.off()
+genome.table
+```
+
+* Representives of each type of trees  
+
+![Species Tree](TreeScan/Rooted/Species_Tree.png)  
+
+![fortis introgressed scandens Late blunt](TreeScan/Rooted/GeneFlow_Tree_sca.png)  
+
+![scandens introgressed fortis Late pointed](TreeScan/Rooted/GeneFlow_Tree_for.png)  
+
+* Recombination rate in the regions of introgression  
+```{bash, eval=F}
+# convert to zebrafinch genome
+./convert.sh all.snp.midpoint.assign.class.trees
+bedtools intersect -wa -wb -a all.snp.midpoint.assign.class.trees.Auto.zebra.bed -b ../../zebra_RR/zebrafinch_50k.RR > all.snp.midpoint.assign.class.trees.Auto.zebra.RR.bed
+bedtools intersect -wa -wb -a all.snp.midpoint.assign.class.trees.Z.zebra.bed -b ../../zebra_RR/zebrafinch_50k.RR > all.snp.midpoint.assign.class.trees.Z.zebra.RR.bed
+cat all.snp.midpoint.assign.class.trees.Auto.zebra.RR.bed all.snp.midpoint.assign.class.trees.Z.zebra.RR.bed > all.snp.midpoint.assign.class.trees.zebra.RR.bed
+```
+* exam the relation between tree topology and recombination rate
+```{r, fig.height=10, fig.width=10}
+mydata <- read.table("TreeScan/Rooted/all.snp.midpoint.assign.class.trees.zebra.RR.bed", header=F)
+mydata <- mydata[,c(1,2,4,5,6,8,9,13)]
+colnames(mydata) <- c("CHR_zebra","POS_zebra","CHR","BIN_START","N_SNP","REF_TREE","TREE_TYPE","RR_zebra")
+mydata$RR_zebra <- as.numeric(as.character(mydata$RR_zebra))
+mydata <- mydata[complete.cases(mydata),]
+mydata$RR_zebra <- (mydata$RR_zebra*1000000/50000)*100/(4*4.8*1e6)
+mydata <- mydata[mydata$RR_zebra <= 20,]
+#mydata$RR_zebra <- log10(mydata$RR_zebra)
+autosome <- mydata[mydata$CHR_zebra!="chrZ",]
+autosome.species <- autosome[autosome$TREE_TYPE=="Species_Tree",]
+autosome.flow <- autosome[autosome$TREE_TYPE=="GeneFlow_Tree_sca",]
+t.test(autosome.species$RR_zebra, autosome.flow$RR_zebra)
+wilcox.test(autosome.species$RR_zebra, autosome.flow$RR_zebra)
+# Without chr1 and chr1A
+t.test(autosome.species[autosome.species$CHR_zebra!="chr1"&autosome.species$CHR_zebra!="chr1A",]$RR_zebra, autosome.flow[autosome.flow$CHR_zebra!="chr1"& autosome.flow$CHR_zebra!="chr1A",]$RR_zebra)
+wilcox.test(autosome.species[autosome.species$CHR_zebra!="chr1"&autosome.species$CHR_zebra!="chr1A",]$RR_zebra, autosome.flow[autosome.flow$CHR_zebra!="chr1"& autosome.flow$CHR_zebra!="chr1A",]$RR_zebra)
+
+Z<-mydata[mydata$CHR_zebra=="chrZ",]
+Z.species <- Z[Z$TREE_TYPE=="Species_Tree",]
+Z.flow <- Z[Z$TREE_TYPE=="GeneFlow_Tree_sca",]
+t.test(Z.species$RR_zebra, Z.flow$RR_zebra)
+wilcox.test(Z.species$RR_zebra, Z.flow$RR_zebra)
+
+mydata <- mydata[mydata$TREE_TYPE=="Species_Tree"|mydata$TREE_TYPE=="GeneFlow_Tree_sca",]
+mydata$CHR_TYPE <- ifelse(mydata$CHR_zebra=="chrZ", "Z", "Auto")
+# boxplot
+library(ggplot2)
+#pdf("TreeScan/Rooted/RR_boxplot.pdf")
+g <- ggplot(mydata, aes(CHR_TYPE, log2(RR_zebra), colour=TREE_TYPE)) + geom_boxplot() + ylab("log2(cM/Mb)") + xlab("") + theme_bw() + theme(axis.text = element_text(size=20), axis.title = element_text(size=20))
+print(g)
+#dev.off()
+
+# boxplot without chr1 and chr1A
+mydata_noChr1 <- mydata[mydata$CHR_zebra!="chr1"&mydata$CHR_zebra!="chr1A",]
+ggplot(mydata_noChr1, aes(CHR_TYPE, log2(RR_zebra), colour=TREE_TYPE)) + geom_boxplot() + ylab("log2(cM/Mb)") + xlab("Without Chr1 and chr1A") + theme_bw() + theme(axis.text = element_text(size=20), axis.title = element_text(size=20))
+
+autosome <- droplevels(autosome[autosome$TREE_TYPE=="Species_Tree"|autosome$TREE_TYPE=="GeneFlow_Tree_sca",])
+quan_bins <- unname(quantile(autosome$RR_zebra, probs = seq(0,1,0.1), na.rm = T))
+autosome$RR_bin <- cut(autosome$RR_zebra, breaks=quan_bins, include.lowest = TRUE, right=TRUE, labels = seq(0.1,1,0.1))
+RR_df <- as.data.frame(table(autosome$TREE_TYPE,autosome$RR_bin))
+# bar plot
+ggplot(autosome, aes(RR_bin, fill=TREE_TYPE,group=TREE_TYPE)) + geom_bar()+ scale_fill_manual(values = c("red","black")) + xlab("Recombination rate quantile")
+# For each chromosome
+mydata$CHR_zebra <- gsub("chr", "Chr", mydata$CHR_zebra)
+chr_order <- c("Chr1","Chr1A","Chr2","Chr3","Chr4","Chr4A","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14","Chr15","ChrZ")
+mydata$CHR_zebra <- factor(mydata$CHR_zebra, levels=chr_order)
+
+#bitmap("TreeScan/fraction_blocks/RR_per_chr.png", width=8.3, height=11, res=300)
+g <- ggplot(mydata) + geom_point(aes(POS_zebra, RR_zebra, colour=TREE_TYPE), size=0.1) + scale_colour_manual(values = c("red","black")) + facet_wrap(CHR_zebra~., scales="free_x", ncol = 3) + theme_bw() + theme(legend.position = "none",  axis.text.x = element_blank(), axis.ticks.x = element_blank() ) + xlab("Chromosomes") + ylab("Recombination rate (cM/Mb)")
+print(g)
+#dev.off()
+
+fig3a <- mydata[mydata$CHR_zebra=="Chr1"|mydata$CHR_zebra=="Chr10",]
+g <- ggplot(fig3a) + geom_point(aes(POS_zebra/1e6, RR_zebra, colour=TREE_TYPE), size=0.1) + scale_colour_manual(values = c("red","black")) + facet_wrap(CHR_zebra~., scales="free_x") + theme_bw() + theme(legend.position = "none" ) + xlab("Position (Mb)") + ylab("Recombination rate (cM/Mb)") + ylim(0,20)
+#pdf("TreeScan/Rooted/fig3a.pdf", width = 4.1, height = 2.9)
+print(g)
+#dev.off()
+```
+
+# introgression in fortis_Late_pointed
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/geneDensity
+* These are 66 windows displaying for_Late_pointed introgression, and most of them sit on chr4
+```{bash,eval=F}
+grep "GeneFlow_Tree_for" all.snp.midpoint.assign.class.trees.zebra.RR.geneDensity.bed | awk '{OFS="\t";print $4,$5,$5+50000}' > for_Late_tree.bed
+# 54 genes in the gene-flow regions
+awk '{print $12}' for_Late_tree.bed.anno | sort | uniq | awk -F ";" '{print $2}' | sed 's/Name=//'
+```
+* perform GO analysis for these genes
+* using the GO database I constructed before: /proj/uppstore2017190/b2012111/private/UserDirectory/fan/phylogenomics/no_hybrids_289/GO_db/
+```{bash, eval=F}
+# convert to chicken ENSEMBL ID
+perl geneID_match.pl for_Late_tree.bed.anno.gene.list > for_Late_tree.bed.anno.gene.gal.ens
+```
+* TopGO
+```{r TopGO, eval=F}
+#topGO
+library(topGO)
+library(biomaRt)
+#library("org.Gg.eg.db")
+rm(list=ls())
+background <- read.table("geneDensity/for_Late_pointed_GOterm/finch_gal.background", header=F)
+background <-background$V1
+names(background)<- background
+
+mydata <- read.table("geneDensity/for_Late_pointed_GOterm/for_Late_tree.bed.anno.gene.gal.ens", header=F)
+mydata <- mydata[complete.cases(mydata),]
+target_gene <- unique(mydata)
+names(target_gene)<-target_gene
+# define interesting genes out of all background genes
+gene_list <- factor(as.integer(background %in% target_gene))
+names(gene_list) <- background
+
+# get ensembl gene ids with GO term
+bm <- useMart("ensembl")
+bm <- useDataset("ggallus_gene_ensembl",mart=bm)
+gene2GO <- getBM(mart=bm, attributes = c("ensembl_gene_id","go_id"), filters="ensembl_gene_id", values=as.vector(background))
+gene2GO <- gene2GO[gene2GO$go_id!="",]
+gene2GO <-by(gene2GO$go_id,gene2GO$ensembl_gene_id, function(x) as.character(x))
+
+# create GOdata class for topGO
+GOdata <- new("topGOdata", ontology="BP", allGenes=gene_list, annot= annFUN.gene2GO, gene2GO=gene2GO, nodeSize=10)
+# run test
+#resultClassic <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+resultWeight <- runTest(GOdata, algorithm = "weight", statistic = "fisher")
+resultElim <- runTest(GOdata, algorithm="elim", statistic="fisher")
+ug <- usedGO(GOdata)
+resultTable <- GenTable(GOdata, Weight_P = resultWeight, Elim_P=resultElim, topNodes = 50, numChar=5000)
+# if you want to print out all terms
+#resultTable <- GenTable(GOdata, Weight_P = resultWeight, Elim_P=resultElim, topNodes = length(ug), numChar=5000)
+write.table(resultTable, file="geneDensity/for_Late_pointed_GOterm/for_Late_tree.bed.anno.gene.gal.ens.GO", append=F, quote=F, sep="\t", row.names=F)
+
+```
+* Erik suggested to use human GO terms which have better annotation support.
+* Download human peptide sequences from ENSEMBL
+http://www.ensembl.org/biomart/martview/2c334c9e6688c3b744951c664674e003
+```{bash, eval=F}
+# extract CDS fasta (423658 sequences from 14341 genes)
+perl -ne '@row=split(/\t/);if($row[2]=="CDS" && $row[-1]=~ /gene=(\w+);/){print "$row[0]\t",$row[3]-1,"\t",$row[4]-1,"\t$1\n"}' Geofor1.ncbi.gff3 > Geofor1.ncbi.CDS.bed
+bedtools getfasta -name -fi ../../../ref_aln/geoFor1.fa -bed Geofor1.ncbi.CDS.bed > Geofor1.ncbi.CDS.fa
+# blast finch cds to human protein
+makeblastdb -in GRCh38.Ensembl.pep.fa -dbtype prot
+blastx -db GRCh38.Ensembl.pep.fa -outfmt 6 -query Geofor1.ncbi.CDS.fa -out geo_GRCh38_blastx.out -evalue 1e-5 -max_target_seqs 1 -num_threads 16
+```
+
+
+# Correlation between gene flow and gene density
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/geneDensity
+```{bash, eval=FALSE}
+# only the protein-coding genes are considered
+grep "Gnomon" ../../ref_aln/Geofor1.ncbi.gene.gff3 > Geofor1.ncbi.gene.gff3
+bedtools makewindows -g geoFor1.genome -w 50000 -s 50000 > geoFor1.50kb.window
+bedtools map -a geoFor1.50kb.window -b Geofor1.ncbi.gene.gff3 -o count -c 9 > geoFor1.50kb.geneDensity
+perl density_match.pl all.snp.midpoint.assign.class.trees.zebra.RR.bed > all.snp.midpoint.assign.class.trees.zebra.RR.geneDensity.bed
+```
+* Plot the correlation
+```{r, fig.height=10, fig.width=10}
+mydata<- read.table("geneDensity/all.snp.midpoint.assign.class.trees.zebra.RR.geneDensity.bed", header=F)
+mydata <- mydata[,c(1,2,4,5,6,8,9,13,14)]
+colnames(mydata) <- c("CHR_zebra","POS_zebra","CHR","BIN_START","N_SNP","REF_TREE","TREE_TYPE","RR_zebra","Gene_Density")
+#mydata$Gene_Density <- mydata$Gene_Density*1000000/50000
+# gene desert
+#mydata <- mydata[mydata$Gene_Density>0,]
+# autosome
+autosome <- mydata[mydata$CHR_zebra!="chrZ",]
+autosome.species <- autosome[autosome$TREE_TYPE=="Species_Tree",]
+autosome.flow <- autosome[autosome$TREE_TYPE=="GeneFlow_Tree_sca",]
+t.test(autosome.species$Gene_Density, autosome.flow$Gene_Density)
+wilcox.test(autosome.species$Gene_Density, autosome.flow$Gene_Density)
+
+Z<-mydata[mydata$CHR_zebra=="chrZ",]
+Z.species <- Z[Z$TREE_TYPE=="Species_Tree",]
+Z.flow <- Z[Z$TREE_TYPE=="GeneFlow_Tree_sca",]
+t.test(Z.species$Gene_Density, Z.flow$Gene_Density)
+wilcox.test(Z.species$Gene_Density, Z.flow$Gene_Density)
+
+# boxplot
+mydata <- mydata[mydata$TREE_TYPE=="Species_Tree"|mydata$TREE_TYPE=="GeneFlow_Tree_sca",]
+mydata$CHR_TYPE <- ifelse(mydata$CHR_zebra=="chrZ", "Z", "Auto")
+library(ggplot2)
+ggplot(mydata, aes(CHR_TYPE, Gene_Density, colour=TREE_TYPE)) + geom_violin()  + xlab("") + theme_bw() + scale_y_continuous(name="Number of genes/50 kb", breaks=seq(0,10,1))
+
+# For each chromosome
+ggplot(mydata) + geom_point(aes(POS_zebra, Gene_Density, colour=TREE_TYPE), size=0.1) + scale_colour_manual(values = c("red","navy")) + facet_wrap(~CHR_zebra, scales="free_x", ncol=2) + theme_bw() + theme(legend.position = "none", axis.text.y = element_blank(), axis.ticks.y = element_blank(),axis.text.x = element_blank(), axis.ticks.x = element_blank() ) + xlab("Chromosomes") + ylab("Gene density")
+```
+* summarize the fraction of tree toplologies on each chromosomes and calculate the size of introgressed blocks
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/TreeScan/Rooted/fraction_blocks
+* use darwin's finch's coordinates because lifeover doesn't necessarily map the windows in 50kb intervals
+```{bash, eval=F}
+grep "GeneFlow_Tree_sca" ../all.snp.midpoint.assign.class.trees.zebra.RR.bed | cut  -f 4-14 | sort -k 1,1 -k 2,2n | awk '{OFS="\t";print $1,$2,$2+50000,$0}' > GeneFlow_Tree_sca.trees.bed
+bedtools merge -d 50000 -c 1,11 -o count,first -i GeneFlow_Tree_sca.trees.bed > GeneFlow_Tree_sca.trees.size.bed
+
+grep "GeneFlow_Tree_for" ../all.snp.midpoint.assign.class.trees.zebra.RR.bed | cut  -f 4-14 | sort -k 1,1 -k 2,2n | awk '{OFS="\t";print $1,$2,$2+50000,$0}' > GeneFlow_Tree_for.trees.bed
+bedtools merge -d 50000 -c 1,11 -o count,first -i GeneFlow_Tree_for.trees.bed > GeneFlow_Tree_for.trees.size.bed
+
+# number of trees per chromosome
+awk '{OFS="\t";print $9,$10}' ../all.snp.midpoint.assign.class.trees.zebra.RR.bed | sort | uniq -c | awk '{OFS="\t";print $3,$2,$1}' | sort -k 1,2 > number_of_tree_per_chr.txt
+```
+* plot fraction of each tree and size of introgressed blocks per chromosome
+```{r}
+size <- read.table("TreeScan/fraction_blocks/GeneFlow_Tree_sca.trees.size.bed", header=F, sep="\t")
+size$V4 <- size$V4*50000/1000000
+colnames(size) <- c("CHR","BIN_S","BIN_E","Block_size","CHR_zebra")
+library(ggplot2)
+#pdf("TreeScan/fraction_blocks/block_size_scandens.pdf", width=8.3, height = 5.8)
+hist(size$Block_size, breaks=100, xlab="Size of introgressed block (Mb)", main="scandens hybrids")
+#dev.off()
+#pdf("TreeScan/fraction_blocks/block_size_scandens_inset.pdf", width=4.3, height = 2.8)
+hist(size$Block_size, breaks=30, xlim=c(2,8), ylim=c(0,10), main="")
+#dev.off()
+
+size <- read.table("TreeScan/fraction_blocks/GeneFlow_Tree_for.trees.size.bed", header=F, sep="\t")
+size$V4 <- size$V4*50000/1000000
+colnames(size) <- c("CHR","BIN_S","BIN_E","Block_size","CHR_zebra")
+library(ggplot2)
+#pdf("TreeScan/fraction_blocks/block_size_fortis.pdf", width=8.3, height = 5.8)
+hist(size$Block_size, breaks=5, xlab="Size of introgressed block (Mb)", main="fortis hybrids", xlim=c(0,8))
+#dev.off()
+
+# proportion of each tree per chromosme
+trees <- read.table("TreeScan/fraction_blocks/number_of_tree_per_chr.txt", header=F)
+library(dplyr)
+colnames(trees) <- c("CHR","Topology","NUM")
+trees <- trees %>% 
+  group_by(CHR) %>% 
+  mutate(fraction=NUM/sum(NUM))
+library(ggplot2)
+trees$CHR <- gsub("chr", "Chr", trees$CHR)
+Chr_order <- c("Chr1","Chr1A","Chr2","Chr3","Chr4","Chr4A","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14","Chr15","Chr17","Chr18","Chr19","Chr20","Chr21","Chr22","Chr23","Chr24","Chr25","Chr26","Chr27","Chr28","ChrLGE22","ChrZ")
+#pdf("TreeScan/fraction_blocks/fraction_tree_per_chr.pdf", width=8.3, height = 11)
+g <- ggplot(trees, aes(CHR, fraction, group=CHR)) + geom_col(aes(fill=Topology)) + scale_x_discrete(limits = rev(chr_order))+ theme_bw() + xlab("")+ ylab("Fraction of tree topology") + coord_flip() 
+print(g)
+#dev.off()
+```
+
+* Introgressed regions in fortis hybrids
+```{r, fig.height=10, fig.width=10}
+mydata <- read.table("geneDensity/all.snp.midpoint.assign.class.trees.zebra.RR.geneDensity.bed", header=F)
+mydata <- mydata[,c(1,2,4,5,6,8,9,13,14)]
+colnames(mydata) <- c("CHR_zebra","POS_zebra","CHR","BIN_START","N_SNP","REF_TREE","TREE_TYPE","RR_zebra","Gene_Density")
+mydata <- mydata[mydata$TREE_TYPE=="GeneFlow_Tree_for",]
+nrow(mydata)
+library(ggplot2)
+ggplot(mydata, aes(POS_zebra,1)) + geom_point(size=0.2) + facet_grid(CHR_zebra~., scales = "free_x")  + theme_bw() + theme(legend.position = "none", axis.text.y = element_blank(), axis.ticks.y = element_blank() ) + xlab("Chromosomes") + ylab("")
+```
+
+# FST ratio  
+* Matt suggested to calculate the FST between fortis_Early/Late_blunt and fortis_Late_pointed and FST between fortis_Late_pointed and scandens_Early/Late_pointed, and then caluclate the rotio of the FSTs.  
+* Measure pooled FST with Popoolation2 
+* "We furthermore recommend that the pool size (number of individuals in the pool) should be larger than the coverage. This minimizes re-sampling the same allele from a single individual several times."  
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/FST_ratio  
+
+```{bash, eval=FALSE}
+module load bioinfo-tools samtools
+module load popoolation2/1201
+
+# Runtime: ~2 days
+samtools mpileup -B -q 20 /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool1/Map.sorted.MarkDup.bam /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool2/Map.sorted.MarkDup.bam /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool3/Map.sorted.MarkDup.bam /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool4/Map.sorted.MarkDup.bam /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool5/Map.sorted.MarkDup.bam /proj/uppstore2017190/b2012111_nobackup/private/Sangeet_files/New_Sequences/Project_2/Sample_Pool6/Map.sorted.MarkDup.bam > Early_Late.mpileup
+java -ea -Xmx40g -jar /sw/apps/bioinfo/popoolation2/1201/rackham/mpileup2sync.jar --input Early_Late.mpileup --output Early_Late.sync --fastq-type sanger --min-qual 20 --threads 8
+rm Early_Late.mpileup
+perl /sw/apps/bioinfo/popoolation2/1201/rackham/fst-sliding.pl --input Early_Late.sync --output Early_Late.10k.fst --min-count 10 --min-coverage 10 --max-coverage 100 --min-covered-fraction 0.5 --window-size 10000 --step-size 10000 --pool-size 60
+
+grep -Ff ../../2019_correctedSNPs/Auto_scaffold.list Early_Late.10k.fst > Early_Late.10k.Auto.fst
+grep -Ff ../../2019_correctedSNPs/Z_scaffold.list Early_Late.10k.fst > Early_Late.10k.Z.fst
+
+# Give a shot to 50kb window
+perl /sw/apps/bioinfo/popoolation2/1201/rackham/fst-sliding.pl --input Early_Late.sync --output Early_Late.50k.fst --min-count 10 --min-coverage 10 --max-coverage 100 --min-covered-fraction 0.5 --window-size 50000 --step-size 50000 --pool-size 100
+
+# Mapped them onto zebra finch genome
+./convert.sh Early_Late.10k.fst
+
+# add zebrafinch recombination rate
+bedtools intersect -wa -wb -a Early_Late.50k.fst.zebra.bed -b ../zebra_RR/zebrafinch_50k.RR > Early_Late.50k.fst.zebra.RR.bed
+bedtools intersect -wa -wb -a Early_Late.10k.fst.zebra.bed -b ../zebra_RR/zebrafinch_10k.RR > Early_Late.10k.fst.zebra.RR.bed
+```
+* Plot for all pairwise ZFST  
+```{r, warning=F, eval=F}
+FST <- read.table("FST_ratio/Early_Late.50k.Auto.fst", header=F, sep="\t")
+FST <- data.frame(lapply(FST, function(x) {gsub("\\d:\\d=", "", x)}))
+pop <- c("sca_Early_p","sca_Late_b","sca_Late_p","for_Early_b","for_Late_b","for_Late_p")
+pairwise_pop <- c()
+for(i in 1:(length(pop)-1)){
+  for(j in (i+1):length(pop)){
+    tmp <- paste(pop[i], pop[j], sep=".")
+    pairwise_pop <- c(pairwise_pop, tmp)
+    }
+  }
+
+colnames(FST) <- c("CHR", "BIN_MID","N_SNP", "FRAC_COV","MIN_COV",pairwise_pop)
+FST.df <- as.data.frame(FST)
+
+FST.df[,2:20] <- sapply(FST.df[,2:20], as.character)
+FST.df[,2:20] <- sapply(FST.df[,2:20], as.numeric)
+# histogram of N_SNP
+hist(FST.df$N_SNP, breaks=1000)
+hist(FST.df$FRAC_COV, breaks=1000)
+hist(FST.df$MIN_COV, breaks=1000)
+#FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=1000 & FST.df$FRAC_COV >= 0.6 & FST.df$MIN_COV >= 20,]
+FST.df <- FST.df[complete.cases(FST.df),]
+FST.df$index <- 1:nrow(FST.df)
+N_chr <- length(unique(FST.df$CHR))
+
+library(ggplot2)
+for(n in 6:20){
+  tmp <- FST.df[,c(1,2,n,21)]
+  # Normalize FST
+  tmp$ZFST <- scale(tmp[,3])
+  g<- ggplot(tmp) + geom_point(aes(x=index, y=ZFST, colour=CHR), size=0.1) + theme_bw() + scale_color_manual(values=rep(c("navy", "gray"), N_chr/2+2)) +  theme(legend.position="none",panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ scale_x_discrete(breaks=NULL)  + xlab(colnames(tmp)[3]) + ylab("ZFST") + ylim(0,20)
+bitmap(paste("FST_ratio/ZFST_50kb/",colnames(tmp)[3],".png", sep=""), res=300)
+print(g)
+dev.off()
+  }
+```
+
+* Plot for all pairwise ZFST on zebrafinch genome
+```{r, warning=F, eval=F}
+FST <- read.table("FST_ratio/Early_Late.50k.fst.zebra.bed", header=F, sep="\t")
+FST <- data.frame(lapply(FST, function(x) {gsub("\\d:\\d=", "", x)}))
+pop <- c("sca_Early_p","sca_Late_b","sca_Late_p","for_Early_b","for_Late_b","for_Late_p")
+pairwise_pop <- c()
+for(i in 1:(length(pop)-1)){
+  for(j in (i+1):length(pop)){
+    tmp <- paste(pop[i], pop[j], sep=".")
+    pairwise_pop <- c(pairwise_pop, tmp)
+    }
+  }
+
+colnames(FST) <- c("zebra_CHR","zebra_POS1","zebra_POS2","CHR", "BIN_MID","N_SNP", "FRAC_COV","MIN_COV",pairwise_pop)
+FST.df <- as.data.frame(FST)
+
+FST.df[,c(2,3,5:23)] <- sapply(FST.df[,c(2,3,5:23)], as.character)
+FST.df[,c(2,3,5:23)] <- sapply(FST.df[,c(2,3,5:23)], as.numeric)
+#FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=250 & FST.df$FRAC_COV >= 0.8 & FST.df$MIN_COV >= 20,]
+
+FST.df$zebra_CHR <- gsub("chr","Chr", FST.df$zebra_CHR)
+snp.right <- c("Chr1","Chr1A","Chr2","Chr3","Chr4","Chr4A","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14","Chr15","Chr17","Chr18","Chr19","Chr20","Chr21","Chr22","Chr23","Chr24","Chr26","Chr27","Chr28","ChrZ")
+FST.df <- FST.df[FST.df$zebra_CHR %in% snp.right, ]
+FST.df <- FST.df[complete.cases(FST.df),]
+
+FST.df$zebra_CHR <- factor(FST.df$zebra_CHR, levels=snp.right)
+FST.df <- FST.df[order(FST.df$zebra_CHR,FST.df$zebra_POS1),]
+FST.df$index <- 1:nrow(FST.df)
+N_chr <- length(unique(FST.df$zebra_CHR))
+
+library(ggplot2)
+for(n in 9:23){
+  tmp <- FST.df[,c(1,2,n,24)]
+  # Normalize FST
+  tmp$ZFST <- scale(tmp[,3])
+  g<- ggplot(tmp) + geom_point(aes(x=index, y=ZFST, colour=zebra_CHR), size=0.05) + theme_bw() + scale_color_manual(values=rep(c("navy", "gray"), N_chr/2+2)) +  theme(legend.position="none",panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ scale_x_discrete(breaks=NULL)  + xlab(colnames(tmp)[3]) + ylab("ZFST") + ylim(0,20)
+bitmap(paste("FST_ratio/zebra_ZFST_50kb/",colnames(tmp)[3],".zebra.png", sep=""), res=300)
+print(g)
+dev.off()
+  }
+```
+
+* Ratio of FST. If there is no introgression between fortis_Late_p and sca_Late_p, the ratio of FST(fortis_Early_b.fortis_Late_p):FST(fortis_Late_p:sca_Early_p) should be uniform along the genome. Otherwise, the ratio should be elevated because fortis_Late_p and sca_Late_p are very similar to each other.  
+```{r, warning=F,fig.height=10, fig.width=10}
+FST <- read.table("FST_ratio/Early_Late.50k.fst.zebra.RR.bed", header=F, sep="\t")
+FST <- data.frame(lapply(FST, function(x) {gsub("\\d:\\d=", "", x)}))
+pop <- c("sca_Early_p","sca_Late_b","sca_Late_p","for_Early_b","for_Late_b","for_Late_p")
+pairwise_pop <- c()
+for(i in 1:(length(pop)-1)){
+  for(j in (i+1):length(pop)){
+    tmp <- paste(pop[i], pop[j], sep=".")
+    pairwise_pop <- c(pairwise_pop, tmp)
+    }
+  }
+
+colnames(FST) <- c("zebra_CHR","zebra_POS1","zebra_POS2","CHR", "BIN_MID","N_SNP", "FRAC_COV","MIN_COV",pairwise_pop,"CHR_RR","START_RR","END_RR","RR")
+
+FST.df <- as.data.frame(FST)
+FST.df[,c(2,3,5:23,25:27)] <- sapply(FST.df[,c(2,3,5:23,25:27)], as.character)
+FST.df[,c(2,3,5:23,25:27)] <- sapply(FST.df[,c(2,3,5:23,25:27)], as.numeric)
+# 10kb window
+#FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=250 & FST.df$FRAC_COV >= 0.8 & FST.df$MIN_COV >= 20,]
+# 50kb window
+FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=1000 & FST.df$FRAC_COV >= 0.8 & FST.df$MIN_COV >= 20,]
+
+# Calculate the ratio
+a = FST.df$for_Late_b.for_Late_p
+b = FST.df$sca_Late_p.for_Late_p
+c = FST.df$sca_Late_p.for_Late_b
+FST.df$fortisHybrid <- (a-b)/(a+b)
+
+a1 = FST.df$sca_Late_b.sca_Late_p
+b1 = FST.df$sca_Late_b.for_Late_b
+c1 = FST.df$sca_Late_p.for_Late_b
+FST.df$scandensHybrid <- (a1-b1)/(a1+b1)
+
+library(tidyverse)
+FST.df <- FST.df %>% select(zebra_CHR, zebra_POS1, CHR, BIN_MID, RR, fortisHybrid, scandensHybrid)
+# Plot
+FST.df$zebra_CHR <- gsub("chr","Chr", FST.df$zebra_CHR)
+snp.right <- c("Chr1","Chr1A","Chr2","Chr3","Chr4","Chr4A","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14","Chr15","Chr17","Chr18","Chr19","Chr20","Chr21","Chr22","Chr23","Chr24","Chr26","Chr27","Chr28","ChrZ")
+FST.df <- FST.df[FST.df$zebra_CHR %in% snp.right, ]
+FST.df <- FST.df[complete.cases(FST.df),]
+
+FST.df$zebra_CHR <- factor(FST.df$zebra_CHR, levels=snp.right)
+FST.df <- FST.df[order(FST.df$zebra_CHR,FST.df$zebra_POS1),]
+FST.df$index <- 1:nrow(FST.df)
+N_chr <- length(unique(FST.df$zebra_CHR))
+
+# shared regions under gene flow (Ratio >1 )
+# correlate it with RR
+# fortis hybrid
+FST.df$geneFlow_for <- ifelse(FST.df$fortisHybrid > 0,"Y", "N")
+# scandens hybrid
+FST.df$geneFlow_sca <- ifelse(FST.df$scandensHybrid > 0,"Y", "N")
+
+# coorelation test under different models
+# linear regression assumption: data are normally distributed
+FST.df <- FST.df[FST.df$zebra_CHR!="ChrZ",]
+linear <- lm( log10(RR) ~ scandensHybrid, data=FST.df)
+summary(linear)
+
+# scandens
+FST.df <- FST.df[log10(FST.df$RR) > -1,]
+g <- ggplot(FST.df, aes(scandensHybrid, log10(RR))) + geom_point(size=0.05) + geom_smooth(method="lm", se=FALSE)+ theme_bw() + ylab("") + xlab("") #+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text = element_blank())
+#bitmap("FST_ratio/scandens_outliers/scandens_RR_correlation.png", res=300, width = 4.1, height = 3.5, unit =  "in" )
+print(g)
+#dev.off()
+print(cor.test(FST.df$scandensHybrid, FST.df$RR))
+
+# fortis
+g <- ggplot(FST.df, aes(fortisHybrid, log10(RR))) + geom_point(size=0.05) + geom_smooth(method="lm", se=FALSE)+ theme_bw() + ylab("") + xlab("") #+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text = element_blank())
+#bitmap("FST_ratio/fortis_outliers/fortis_RR_correlation.png", res=300, width = 4.1, height = 3.5, unit =  "in" )
+print(g)
+#dev.off()
+print(cor.test(FST.df$fortisHybrid, FST.df$RR))
+
+# distribution on each chromosome
+g <-ggplot(FST.df) + geom_point(aes(zebra_POS1, scandensHybrid, colour=geneFlow_sca), size=0.1) + scale_color_manual(values=c("navy","red")) + geom_point(aes(zebra_POS1, log10(RR)), size=0.1)+ facet_wrap(~zebra_CHR, scales="free", ncol=2) + theme_bw() + theme(legend.position = "none", axis.text.y = element_blank(), axis.ticks.y = element_blank(),axis.text.x = element_blank(), axis.ticks.x = element_blank() ) + xlab("Chromosomes") + ylab("FST ratio")
+print(g)
+
+# correlation on each chromosome
+# remove outliers in recombination rate
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(0.005, .995), na.rm = na.rm, ...)
+  y <- x
+  y[x < (qnt[1])] <- NA
+  y[x > (qnt[2])] <- NA
+  y
+}
+library(dplyr)
+FST.df0 <- FST.df %>%
+  group_by(zebra_CHR) %>%
+  mutate(scandensHybrid = remove_outliers(scandensHybrid))
+#bitmap("FST_ratio/scandens_outliers/correlation_scandens_per_chr.png",width = 8.3, height=11, res = 300)
+g <- ggplot(FST.df0,aes(scandensHybrid, log10(RR))) + geom_point( size=0.1)+ geom_smooth(method="lm",se=FALSE) + facet_wrap(~zebra_CHR, scales="free_x", ncol=4) + theme_bw() + theme(legend.position = "none") + xlab("FST ratio") + ylab("log10(rho per 50kb)")
+print(g)
+#dev.off()
+
+# test significance for each chromosome
+chr_set <- unique(FST.df0$zebra_CHR)
+for( chr in chr_set){
+  tmp <- FST.df0[FST.df0$zebra_CHR==chr,]
+  print(chr)
+  print(cor.test(tmp$scandensHybrid, log10(tmp$RR)))
+  }
+```
+
+* outliers in the FST ratio
+```{r, warning=F,fig.height=10, fig.width=10}
+FST <- read.table("FST_ratio/Early_Late.50k.fst.zebra.RR.bed", header=F, sep="\t")
+FST <- data.frame(lapply(FST, function(x) {gsub("\\d:\\d=", "", x)}))
+pop <- c("sca_Early_p","sca_Late_b","sca_Late_p","for_Early_b","for_Late_b","for_Late_p")
+pairwise_pop <- c()
+for(i in 1:(length(pop)-1)){
+  for(j in (i+1):length(pop)){
+    tmp <- paste(pop[i], pop[j], sep=".")
+    pairwise_pop <- c(pairwise_pop, tmp)
+    }
+  }
+
+colnames(FST) <- c("zebra_CHR","zebra_POS1","zebra_POS2","CHR", "BIN_MID","N_SNP", "FRAC_COV","MIN_COV",pairwise_pop,"CHR_RR","START_RR","END_RR","RR")
+
+FST.df <- as.data.frame(FST)
+FST.df[,c(2,3,5:23,25:27)] <- sapply(FST.df[,c(2,3,5:23,25:27)], as.character)
+FST.df[,c(2,3,5:23,25:27)] <- sapply(FST.df[,c(2,3,5:23,25:27)], as.numeric)
+#FST.df <- FST.df %>% mutate_each_(funs(scale(.) %>% as.vector), vars=names(FST.df)[9:23])
+# 10kb window
+#FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=250 & FST.df$FRAC_COV >= 0.8 & FST.df$MIN_COV >= 20,]
+# 50kb window
+FST.df <- FST.df[FST.df$N_SNP >= 20 & FST.df$N_SNP<=1000 & FST.df$FRAC_COV >= 0.8 & FST.df$MIN_COV >= 20,]
+# Calculate the ratio
+a = FST.df$for_Late_b.for_Late_p
+b = FST.df$sca_Late_p.for_Late_p
+c = FST.df$sca_Late_p.for_Late_b
+FST.df$fortisHybrid <- (a-b)/(a+b)
+
+a1 = FST.df$sca_Late_b.sca_Late_p
+b1 = FST.df$sca_Late_b.for_Late_b
+c1 = FST.df$sca_Late_p.for_Late_b
+FST.df$scandensHybrid <- (a1-b1)/(a1+b1)
+
+library(tidyverse)
+FST.df <- FST.df %>% select(zebra_CHR, zebra_POS1, CHR, BIN_MID, RR, fortisHybrid, scandensHybrid)
+# Plot
+FST.df$zebra_CHR <- gsub("chr","Chr", FST.df$zebra_CHR)
+snp.right <- c("Chr1","Chr1A","Chr2","Chr3","Chr4","Chr4A","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14","Chr15","Chr17","Chr18","Chr19","Chr20","Chr21","Chr22","Chr23","Chr24","Chr26","Chr27","Chr28","ChrZ")
+FST.df <- FST.df[FST.df$zebra_CHR %in% snp.right, ]
+FST.df <- FST.df[complete.cases(FST.df),]
+
+FST.df$zebra_CHR <- factor(FST.df$zebra_CHR, levels=snp.right)
+FST.df <- FST.df[order(FST.df$zebra_CHR,FST.df$zebra_POS1),]
+FST.df$index <- 1:nrow(FST.df)
+N_chr <- length(unique(FST.df$zebra_CHR))
+
+# fortis hybrids
+library(ggplot2)
+if(FALSE){
+g <- ggplot(FST.df) + geom_point(aes(x=index, y=fortisHybrid, colour=zebra_CHR), size=0.05) + theme_bw() + scale_color_manual(values=rep(c("navy", "gray"), N_chr/2+2)) +  theme(legend.position="none",panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ scale_x_discrete(breaks=NULL)  + ggtitle("") + ylab("delta FST") + xlab("")
+bitmap("FST_ratio/fortis_outliers/fortisHybrid_FSTRatio.png", res=300)
+print(g)
+dev.off()
+}
+# outliers for fortis hybrids
+fortis <- FST.df[FST.df$fortisHybrid > 0,]
+#write.table(fortis, file = "FST_ratio/fortis_outliers/fortis_outliers.list", quote = F, sep="\t", row.names = F, col.names = T)
+# chr4
+chr4 <- FST.df %>% filter(zebra_CHR == "Chr4")
+plot(chr4$zebra_POS1, chr4$fortisHybrid, cex=0.2, xlab="Chr4", ylab="FST Ratio")
+chrZ <- FST.df %>% filter(zebra_CHR == "ChrZ")
+plot(chrZ$zebra_POS1, chrZ$fortisHybrid, cex=0.2, xlab="ChrZ", ylab="FST Ratio")
+chr1 <- FST.df %>% filter(zebra_CHR == "Chr1")
+plot(chr1$zebra_POS1, chr1$fortisHybrid, cex=0.2, xlab="Chr1", ylab="FST Ratio")
+# overlap with TreeScan
+mydata <- read.table("geneDensity/for_Late_pointed_GOterm/For_Late_tree.regions", header=T)
+mydata$BIN_MID <- mydata$BIN_START+25000
+test <- mydata %>% inner_join(fortis, by=c("CHR","BIN_MID"))
+# scandens hybrids
+if(FALSE){
+g <- ggplot(FST.df) + geom_point(aes(x=index, y=scandensHybrid, colour=zebra_CHR), size=0.05) + theme_bw() + scale_color_manual(values=rep(c("navy", "gray"), N_chr/2+2)) +  theme(legend.position="none",panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ scale_x_discrete(breaks=NULL)  + ggtitle("") + ylab("delta FST") + xlab("")
+bitmap("FST_ratio/scandens_outliers/scandensHybrid_FSTRatio.png", res=300)
+print(g)
+dev.off()
+}
+
+# outliers for scandens hybrids
+scandens <- FST.df[FST.df$scandensHybrid > 0,]
+#write.table(scandens, file = "FST_ratio/scandens_outliers/scandens_outliers.list", quote = F, sep="\t", row.names = F, col.names = T)
+chr1 <- FST.df %>% filter(zebra_CHR == "Chr1")
+plot(chr1$zebra_POS1, chr1$scandensHybrid, cex=0.2, xlab="Chr1", ylab="FST Ratio")
+chr2 <- FST.df %>% filter(zebra_CHR == "Chr2")
+plot(chr2$zebra_POS1, chr2$scandensHybrid, cex=0.2, xlab="Chr2", ylab="FST Ratio")
+```
+
+* Correlate regions under gene flow with recombination rate in zebra finch  
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/zebra_RR  
+* Data is from: http://science.sciencemag.org/content/350/6263/928  
+```{bash, eval=F}
+bedtools makewindows -g ZF.masked_genome.fai -w 50000 > zebra_50k_window.bed
+bedtools makewindows -g ZF.masked_genome.fai -w 10000 > zebra_10k_window.bed
+awk '{OFS="\t";print FILENAME,$0}' recombination_map/*.txt | grep -v -P "#|version" | sed 's/recombination_map\///' | sed 's/_recombination_bpen5.txt//'  > zebrafinch_bpen5.RR
+awk '{OFS="\t";print $1,$2,$3,$5*($3-$2)}' zebrafinch_bpen5.RR | sort -k 1,1 -k 2,2n > zebrafinch_bpen5_RR.bed
+bedtools map -c 4 -o sum -a zebra_50k_window.bed -b zebrafinch_bpen5_RR.bed > zebrafinch_50k.RR
+bedtools map -c 4 -o sum -a zebra_10k_window.bed -b zebrafinch_bpen5_RR.bed > zebrafinch_10k.RR
+
+```
+
+# Sex estimate
+* To determine if there is sex bias in the pools, I checked the depth ratio of Z to autosomes
+* pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/Sex_ratio
+```{bash sex_ratio, eval=F}
+module load bioinfo-tools vcftools
+vcftools --gzvcf Early_Late.vcf.gz --extract-FORMAT-info DP --out Early_Late
+```
+
+
+# TreeMix analysis
+Use TreeMix to infer the pattern of how fortis and scandens populations hybridized  
+No missing genotype is allowed otherwise TrrMix will throw out errors  
+
+pwd: /proj/uppstore2017190/b2012111_nobackup/private/fan/fortis_scandens_pools/TreeMix  
+
+Run time 00:04:51  
+```{bash, eval=FALSE}
+vcftools --gzvcf ../Early_Late.vcf.gz --out Early_Late --extract-FORMAT-info AD --max-missing 1
+
+head -n 1 ../Early_Late.AD.FORMAT | cut -f 3-8 > Early_Late.Autosome.AD
+grep -Ff ../../2019_correctedSNPs/Auto_scaffold.list ../Early_Late.AD.FORMAT | cut -f 3-8 >> Early_Late.Autosome.AD
+
+gzip Early_Late.Autosome.AD
+
+module load TreeMix/1.12
+treemix -i Early_Late.AD.gz -o Early_Late_m0
+
+treemix -i Early_Late.AD.gz -o Early_Late_m1 -m 1
+
+treemix -i Early_Late.AD.gz -o Early_Late_m2 -m 2
+
+treemix -i Early_Late.AD.gz -o Early_Late_m3 -m 3
+```
+
+Plot the trees in different -m parameters (migration)
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+source("/Project/b2012111_DarwinsFinch/EarlyLate_FortisScandens/treemix-1.13/src/plotting_funcs.R")
+# Autosome
+plot_tree("TreeMix/Early_Late.Auto.m0")
+plot_tree("TreeMix/Early_Late.Auto.m1")
+plot_tree("TreeMix/Early_Late.Auto.m2")
+plot_tree("TreeMix/Early_Late.Auto.m3")
+# Z
+plot_tree("TreeMix/Early_Late.Z.m0")
+plot_tree("TreeMix/Early_Late.Z.m1")
+plot_tree("TreeMix/Early_Late.Z.m2")
+plot_tree("TreeMix/Early_Late.Z.m3")
+```
